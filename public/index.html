@@ -260,6 +260,7 @@ function showUser(user) {
   $('playerName').textContent = user.username;
   updateStats(user);
   connectChat();
+  if (window.startCity) window.startCity();
   loadWorld();
 }
 function updateStats(user) {
