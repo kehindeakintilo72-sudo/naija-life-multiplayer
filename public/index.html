@@ -1,0 +1,336 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Naija Life Multiplayer</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #101820; color: #f4f6f8; }
+    header { background: #087443; padding: 20px; text-align: center; }
+    header h1 { margin: 0 0 6px; }
+    main { width: min(100% - 24px, 950px); margin: 20px auto; }
+    .card { background: #1b2935; border: 1px solid #344654; border-radius: 14px; padding: 18px; margin-bottom: 16px; }
+    h2, h3 { margin-top: 0; }
+    input, select, button { width: 100%; padding: 12px; margin: 6px 0; border-radius: 8px; border: 1px solid #526574; font-size: 16px; }
+    input, select { background: #101820; color: white; }
+    button { background: #0a995b; color: white; border: 0; font-weight: bold; cursor: pointer; }
+    button:disabled { opacity: .5; }
+    .secondary { background: #344654; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .item { background: #101820; border-radius: 10px; padding: 14px; }
+    .muted { color: #b7c5ce; font-size: 14px; }
+    #notice { padding: 12px; border-radius: 8px; margin-bottom: 12px; white-space: pre-wrap; }
+    #chatlog { height: 220px; overflow-y: auto; background: #101820; border-radius: 8px; padding: 12px; overflow-wrap: anywhere; }
+    .hidden { display: none; }
+    .money { color: #65e6a4; font-weight: bold; }
+    footer { text-align: center; padding: 20px; color: #b7c5ce; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🇳🇬 Naija Life</h1>
+  <div>Live your life. Work, earn, buy a home and meet players.</div>
+</header>
+
+<main>
+  <div id="notice" class="hidden"></div>
+
+  <section id="auth" class="card">
+    <h2>Welcome, player!</h2>
+    <p class="muted">Create an account or log in to enter the world.</p>
+    <form id="authForm">
+      <input id="username" placeholder="Username (3–20 characters)" minlength="3" maxlength="20" required autocomplete="username">
+      <input id="password" type="password" placeholder="Password (at least 10 characters)" minlength="10" maxlength="128" required autocomplete="current-password">
+      <button type="submit" id="authButton">Log in</button>
+    </form>
+    <button class="secondary" id="toggleAuth" type="button">Need an account? Register</button>
+    <p class="muted">Keep your password private. This is a game prototype.</p>
+  </section>
+
+  <section id="game" class="hidden">
+    <div class="card">
+      <h2>🏙️ Your Naija Life</h2>
+      <p>Player: <strong id="playerName"></strong></p>
+      <p>Cash: <span class="money" id="cash">₦0</span> · XP: <span id="xp">0</span> · Level: <span id="level">1</span></p>
+      <label for="location">Choose your location</label>
+      <select id="location">
+        <option>Yaba</option>
+        <option>Balogun Market</option>
+        <option>The Beach</option>
+        <option>Tech Hub</option>
+        <option>Freedom Park</option>
+        <option>Marina</option>
+        <option>Surulere</option>
+        <option>Lekki</option>
+      </select>
+      <button id="moveButton">Go to location</button>
+      <button id="logout" class="secondary">Log out</button>
+    </div>
+
+    <div class="card">
+      <h2>💼 Find work</h2>
+      <p class="muted">Complete a shift to earn cash and XP. You must wait 30 seconds between shifts.</p>
+      <div id="jobs" class="grid">Loading jobs...</div>
+    </div>
+
+    <div class="card">
+      <h2>🏠 Property market</h2>
+      <div id="houses" class="grid">Loading properties...</div>
+      <h3>Your properties</h3>
+      <div id="myHouses">No properties yet.</div>
+    </div>
+
+    <div class="card">
+      <h2>🟢 Players online</h2>
+      <div id="online" class="muted">Loading players...</div>
+    </div>
+
+    <div class="card">
+      <h2>💬 World chat</h2>
+      <div id="chatlog" aria-live="polite"></div>
+      <form id="chatForm">
+        <input id="chatInput" maxlength="240" placeholder="Say something to everyone..." required>
+        <button type="submit">Send message</button>
+      </form>
+      <p class="muted">Be respectful. Do not share passwords or private information.</p>
+    </div>
+
+    <div class="card">
+      <h2>👥 Friends</h2>
+      <form id="friendForm">
+        <input id="friendName" placeholder="Player username" maxlength="20" required>
+        <button type="submit">Send friend request</button>
+      </form>
+      <button id="loadFriends" class="secondary" type="button">View friends and requests</button>
+      <div id="friends" class="muted"></div>
+    </div>
+  </section>
+</main>
+
+<footer>Naija Life Multiplayer · Built for the community 🇳🇬</footer>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let registering = false;
+let socket = null;
+let currentUser = null;
+
+function notice(message) {
+  $('notice').textContent = message;
+  $('notice').classList.remove('hidden');
+}
+function clearNotice() {
+  $('notice').textContent = '';
+  $('notice').classList.add('hidden');
+}
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    ...options
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Something went wrong.');
+  return data;
+}
+function showUser(user) {
+  currentUser = user;
+  $('auth').classList.add('hidden');
+  $('game').classList.remove('hidden');
+  $('playerName').textContent = user.username;
+  updateStats(user);
+  connectChat();
+  loadWorld();
+}
+function updateStats(user) {
+  $('cash').textContent = '₦' + Number(user.cash).toLocaleString('en-NG');
+  $('xp').textContent = user.xp;
+  $('level').textContent = user.level;
+  $('location').value = user.location;
+}
+$('toggleAuth').addEventListener('click', () => {
+  registering = !registering;
+  $('authButton').textContent = registering ? 'Create account' : 'Log in';
+  $('toggleAuth').textContent = registering ? 'Already registered? Log in' : 'Need an account? Register';
+  $('password').setAttribute('autocomplete', registering ? 'new-password' : 'current-password');
+});
+$('authForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  clearNotice();
+  $('authButton').disabled = true;
+  try {
+    const data = await api(registering ? '/api/register' : '/api/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: $('username').value.trim(), password: $('password').value })
+    });
+    showUser(data.user);
+    notice('Welcome to Naija Life, ' + data.user.username + '!');
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    $('authButton').disabled = false;
+  }
+});
+async function loadWorld() {
+  try {
+    const data = await api('/api/world');
+    updateStats(data.user);
+    $('jobs').replaceChildren();
+    data.jobs.forEach(job => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const title = document.createElement('h3');
+      title.textContent = job.name;
+      const details = document.createElement('p');
+      details.textContent = 'Pay: ₦' + Number(job.pay).toLocaleString('en-NG') + ' · ' + job.xp + ' XP';
+      const button = document.createElement('button');
+      button.textContent = 'Work a shift';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          const result = await api('/api/jobs/' + job.id + '/work', { method: 'POST', body: '{}' });
+          updateStats(result.user);
+          notice(result.message);
+          await loadWorld();
+        } catch (error) { notice(error.message); }
+        finally { button.disabled = false; }
+      });
+      item.append(title, details, button);
+      $('jobs').append(item);
+    });
+    $('houses').replaceChildren();
+    data.houses.forEach(house => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      const title = document.createElement('h3');
+      title.textContent = house.name;
+      const details = document.createElement('p');
+      details.textContent = house.location + ' · ₦' + Number(house.price).toLocaleString('en-NG');
+      const button = document.createElement('button');
+      button.textContent = house.owned ? 'Already owned' : 'Buy property';
+      button.disabled = !!house.owned;
+      button.addEventListener('click', async () => {
+        try {
+          const result = await api('/api/houses/' + house.id + '/buy', { method: 'POST', body: '{}' });
+          updateStats(result.user);
+          notice(result.message);
+          await loadWorld();
+        } catch (error) { notice(error.message); }
+      });
+      item.append(title, details, button);
+      $('houses').append(item);
+    });
+    $('myHouses').textContent = data.myHouses.length
+      ? data.myHouses.map(h => h.name + ' — ' + h.location).join(' · ')
+      : 'No properties yet. Work and save to buy one!';
+    renderOnline(data.online || []);
+    $('chatlog').replaceChildren();
+    (data.feed || []).forEach(addChatMessage);
+  } catch (error) { notice(error.message); }
+}
+function addChatMessage(message) {
+  const line = document.createElement('p');
+  const name = document.createElement('strong');
+  name.textContent = message.username + ': ';
+  const body = document.createElement('span');
+  body.textContent = message.body;
+  line.append(name, body);
+  $('chatlog').append(line);
+  $('chatlog').scrollTop = $('chatlog').scrollHeight;
+}
+function renderOnline(users) {
+  $('online').textContent = users.length
+    ? users.map(user => user.username + ' (' + user.location + ')').join(' · ')
+    : 'No players online yet.';
+}
+function connectChat() {
+  if (socket) socket.disconnect();
+  socket = io();
+  socket.on('world:chat-message', addChatMessage);
+  socket.on('presence:list', renderOnline);
+  socket.on('app:error', notice);
+  socket.on('friends:update', () => {});
+  socket.on('connect_error', error => notice(error.message));
+}
+$('moveButton').addEventListener('click', async () => {
+  try {
+    const result = await api('/api/location', {
+      method: 'POST', body: JSON.stringify({ location: $('location').value })
+    });
+    updateStats(result.user);
+    if (socket && socket.connected) socket.emit('world:move', result.user.location);
+    notice('You are now in ' + result.user.location + '.');
+    await loadWorld();
+  } catch (error) { notice(error.message); }
+});
+$('chatForm').addEventListener('submit', event => {
+  event.preventDefault();
+  const message = $('chatInput').value.trim();
+  if (!message || !socket || !socket.connected) {
+    notice('Chat is not connected. Please wait or log in again.');
+    return;
+  }
+  socket.emit('world:chat', message);
+  $('chatInput').value = '';
+});
+$('friendForm').addEventListener('submit', async event => {
+  event.preventDefault();
+  try {
+    const result = await api('/api/friends/request', {
+      method: 'POST', body: JSON.stringify({ username: $('friendName').value.trim() })
+    });
+    notice(result.message);
+    $('friendName').value = '';
+  } catch (error) { notice(error.message); }
+});
+$('loadFriends').addEventListener('click', async () => {
+  try {
+    const data = await api('/api/friends');
+    $('friends').replaceChildren();
+    if (!data.friends.length) {
+      $('friends').textContent = 'No friends or requests yet.';
+      return;
+    }
+    data.friends.forEach(friend => {
+      const line = document.createElement('p');
+      line.textContent = friend.username + ' — ' + friend.status;
+      if (friend.status === 'pending' && friend.requester_id !== currentUser.id) {
+        const button = document.createElement('button');
+        button.textContent = 'Accept request';
+        button.addEventListener('click', async () => {
+          try {
+            await api('/api/friends/' + friend.id + '/accept', { method: 'POST', body: '{}' });
+            notice('Friend request accepted.');
+            $('loadFriends').click();
+          } catch (error) { notice(error.message); }
+        });
+        line.append(button);
+      }
+      $('friends').append(line);
+    });
+  } catch (error) { notice(error.message); }
+});
+$('logout').addEventListener('click', async () => {
+  try { await api('/api/logout', { method: 'POST', body: '{}' }); } catch (_) {}
+  if (socket) socket.disconnect();
+  currentUser = null;
+  $('game').classList.add('hidden');
+  $('auth').classList.remove('hidden');
+  clearNotice();
+});
+(async function restoreSession() {
+  try {
+    const data = await api('/api/me');
+    showUser(data.user);
+  } catch (_) {
+    $('auth').classList.remove('hidden');
+    $('game').classList.add('hidden');
+  }
+})();
+</script>
+</body>
+                                           </html>
+  
